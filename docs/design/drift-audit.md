@@ -22,7 +22,7 @@ Ranked by surface size (largest first).
 | 1 | **Example documents** — full schema shape embedded | 30 files under `skills/*/examples/` + inline `json` blocks in 10 spec docs | Move canonical examples to the schema repo (`analitiq-infra`), validated by its CI; plugin **references** them + thin craft notes |
 | 2 | **Auth-type enum** (`api_key`…`aws_iam`) | `CLAUDE.md`, `references/enum-mappers.md`, `references/io-contracts.md`, `connector-spec-api/SKILL.md`, `spec-auth-flows.md`, validator (+2 examples) | Load from `connector` schema `auth.type` enum |
 | 3 | **Driver enum** (`postgresql/snowflake/bigquery`) | `CLAUDE.md`, `enum-mappers.md`, `io-contracts.md`, `connector-spec-db/SKILL.md`, `spec-driver-selection.md`, `spec-dsn-bindings.md`, `connector-provider-researcher.md`, `db-connector-creator.md` | Load from `AdbcTransport.driver` enum |
-| 4 | **Value-expression scopes** (closed list) | `references/value-expressions.md`, `connection-contract.md`, `lifecycle-phases.md`, `CLAUDE.md`, validator, `spec-transport.md` | Load from schema |
+| 4 | ~~**Value-expression scopes** (closed list)~~ | `references/value-expressions.md`, `connection-contract.md`, `lifecycle-phases.md`, `CLAUDE.md`, validator, `spec-transport.md` | **Reclassified → craft.** The published schema has **no single scope enum** — only fragmented `storage` enums (`connection.parameters`/`secrets`, `connection.selections`/`connection.discovered`) plus runtime/auth/stream scopes the validator owns semantically. The full scope vocabulary is **plugin-owned** (like `ssl_mode`), so "load from schema" is not achievable or correct. Keep as craft; see below. |
 | 5 | **DSN encoding enum** | `CLAUDE.md`, `spec-dsn-bindings.md`, `connector-spec-db/SKILL.md`, `db-connector-creator.md`, validator (+3 examples) | Load from schema |
 | 6 | **Canonical Arrow vocab** | `spec-type-maps.md`, `CLAUDE.md`, `db-connector-creator.md`, validator (+ example maps) | **Already single-sourced** in `canonical-types.json` (`analitiq-infra`) — reference it, stop restating |
 | 7 | **Pagination styles** (`offset/page/cursor/link/keyset`) | `references/io-contracts.md`, `spec-pagination.md` | Load from schema |
@@ -34,6 +34,12 @@ Ranked by surface size (largest first).
 
 - **`ssl_mode` vocabulary** — connector-defined per provider (`CLAUDE.md`
   states this explicitly), not owned by the published schema.
+- **Value-expression scopes** (was #4) — the *names* of the scopes
+  (`secrets.*`, `connection.parameters.*`, `connection.selections.*`,
+  `connection.discovered.*`, `auth.*`, `runtime.*`, `stream.*`) are a
+  plugin-owned vocabulary. The schema constrains a few `storage` targets to
+  subsets of it but never enumerates the whole list, so the validator's
+  `KNOWN_SCOPES` is the source of truth, not a restatement. Keep.
 - **Driver-selection decision order**, datetime naive/tz choice, pagination
   choice, auth-flow idioms, provider gotchas, the "why."
 
@@ -64,6 +70,25 @@ These cannot drift from the schema because the schema never defined them.
 3. **`$schema` URLs (#8)** — stable by design; defer / centralize last.
 
 ---
+
+## Status — addressed by the contract-derived-research change
+
+| # | Surface | Disposition |
+|---|---|---|
+| 1 | Example documents | **Deferred (cross-repo).** Moving canonical examples into `analitiq-infra` + referencing them can't be done from this repo; the examples stay until the schema repo hosts them. The drift **policy** (CLAUDE.md) now forbids adding new restated shape. |
+| 2 | Auth-type enum | **Guarded by CI.** `test_schema_drift.py::test_auth_types_match_schema` pins the set to the live `*Auth` `$defs`; `enum-mappers.md` reframed as schema-derived logic. |
+| 3 | Driver enum | **Guarded by CI.** `test_adbc_drivers_match_schema` pins it to `AdbcTransport.driver`. |
+| 4 | Value-expression scopes | **Reclassified as craft** (see table + Craft list). No change — not a schema enum. |
+| 5 | DSN encoding enum | **Fixed at the source.** The validator now derives the enum from the live connector schema (`known_encodings()`), literal kept only as offline fallback; `test_dsn_encodings_match_schema` pins both. |
+| 6 | Canonical Arrow vocab | **Policy.** Already single-sourced in `canonical-types.json`; the drift policy now names it the authority and marks inline lists illustrative. |
+| 7 | Pagination styles | **Guarded by CI.** `test_pagination_styles_match_schema` pins the set to the `*Pagination` `$defs`. |
+| 8 | `$schema` URLs | **Partial.** The validator's connector URL is centralized to one `CONNECTOR_SCHEMA_URL` constant; the rest stay (stable by design, `/latest.json`). Lowest priority. |
+
+The general rule is now stated once in **CLAUDE.md → "Single source of truth
+(drift policy)"** and enforced for the residue (the decision-logic enums that
+can't be deleted) by `tests/connector_validator/test_schema_drift.py`. The
+fetch-once-pass-down mechanism is wired into the researcher (the contract is
+its mission spec) and the creators (they read the same schemas as vocabulary).
 
 ## How this was produced
 

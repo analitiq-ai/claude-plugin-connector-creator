@@ -14,6 +14,7 @@ authored documents declare the same host in their `$schema` field — the
 from __future__ import annotations
 
 import argparse
+import functools
 import hashlib
 import json
 import os
@@ -23,6 +24,8 @@ import urllib.error
 import urllib.request
 from pathlib import Path
 from typing import Any, Callable
+
+CONNECTOR_SCHEMA_URL = "https://schemas.analitiq.ai/connector/latest.json"
 
 try:
     from jsonschema import Draft202012Validator
@@ -169,7 +172,11 @@ KNOWN_FUNCTIONS = {
     "url_encode",
 }
 
-KNOWN_ENCODINGS = {
+# The closed DSN-binding encoding vocabulary is owned by the published
+# connector schema ($defs/DsnBinding/properties/encoding). Derive it from the
+# live schema so this validator never drifts from the contract; the literal
+# below is the offline fallback and documents the expected set.
+_FALLBACK_ENCODINGS = {
     "raw",
     "host",
     "url_userinfo",
@@ -177,6 +184,35 @@ KNOWN_ENCODINGS = {
     "url_query_key",
     "url_query_value",
 }
+
+
+def _enum_at(schema: dict, *path: str) -> set[str] | None:
+    """Return the `enum` set at a `$defs`/properties path, or None if absent."""
+    node: Any = schema
+    for key in path:
+        if not isinstance(node, dict) or key not in node:
+            return None
+        node = node[key]
+    enum = node.get("enum") if isinstance(node, dict) else None
+    return set(enum) if isinstance(enum, list) else None
+
+
+@functools.lru_cache(maxsize=1)
+def known_encodings() -> frozenset[str]:
+    """Closed DSN-binding `encoding` enum, read from the live connector schema.
+
+    Falls back to `_FALLBACK_ENCODINGS` when the schema can't be reached or
+    no longer exposes the enum at the expected pointer, so offline runs keep
+    working without silently accepting an arbitrary value.
+    """
+    try:
+        schema = fetch_schema(CONNECTOR_SCHEMA_URL)
+        derived = _enum_at(schema, "$defs", "DsnBinding", "properties", "encoding")
+        if derived:
+            return frozenset(derived)
+    except Exception:
+        pass
+    return frozenset(_FALLBACK_ENCODINGS)
 
 
 def check_reserved_fields(doc: dict) -> list[dict]:
@@ -593,13 +629,14 @@ def check_dsn_bindings(doc: dict) -> list[dict]:
                 )
                 continue
             enc = bspec.get("encoding")
-            if enc is not None and enc not in KNOWN_ENCODINGS:
+            encodings = known_encodings()
+            if enc is not None and enc not in encodings:
                 findings.append(
                     finding(
                         "dsn-binding",
                         "error",
                         f"{path_prefix}/bindings/{bk}/encoding",
-                        f"encoding '{enc}' is not in the closed enum {sorted(KNOWN_ENCODINGS)}.",
+                        f"encoding '{enc}' is not in the closed enum {sorted(encodings)}.",
                         rule_doc="connectors/connector-schema-parameterization.md#transport-contracts",
                     )
                 )

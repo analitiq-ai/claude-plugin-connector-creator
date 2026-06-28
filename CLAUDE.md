@@ -96,6 +96,16 @@ Authored documents declare `$schema` with this host — the URL is locked by a `
 
 The `connector-schema-validator` sub-agent runs `scripts/validate_connector.py`, which performs Draft 2020-12 JSON Schema validation plus semantic validators (reserved-field, expression-resolver, phase-resolvability, transport-ref, dsn-binding, auth-shape, tls-consistency, type-map-coverage, type-map-rule, type-map-write-coverage, endpoint-annotations). The validator checks JSON documents only — the database package files are enforced by registry CI. Tests under `tests/connector_validator/`.
 
+## Single source of truth (drift policy)
+
+The published schema is the single source of truth. **Never restate what it defines — reference or load it.** Carry only craft the schema can't express (judgment, idioms, gotchas, workflow). This splits everything into **contract** (don't duplicate — field shapes, enums, vocabularies, `$schema` URLs) and **craft** (keep — *how* to choose, the "why", provider gotchas). Three mechanisms:
+
+- **`$ref` / load the live schema** for any JSON-schema shape the plugin needs. The validator already fetches + caches the schemas; e.g. the DSN-binding `encoding` enum is derived from the live `connector` schema (`$defs/DsnBinding/properties/encoding`), with a literal fallback only for offline runs.
+- **Fetch-once, pass-down** — the orchestrator hands the live contract schema URLs to the researcher (the mission spec) and the creators read the same schemas as vocabulary, so authoring and validation agree on one contract.
+- **Drift-check CI** for anything that must stay duplicated as decision logic (e.g. the `enum-mappers` that map provider facts onto schema enums): `tests/connector_validator/test_schema_drift.py` loads the live schemas and fails the build if the plugin's enum targets diverge.
+
+Enum lists that appear in this file and in skill prose are **illustrative**; the authoritative definition is always the live schema (or, for canonical Arrow types, `canonical-types.json` in `analitiq-infra`). Craft that the schema never defined (e.g. the `ssl_mode` vocabulary, the driver-selection decision order, datetime naive/tz judgment) is not drift-exposed and stays. Full rationale: `docs/design/contract-derived-research.md` §2.
+
 ## Canonical Types
 
 Canonical types are Apache Arrow logical types in PascalCase (e.g. `Int32`, `Int64`, `Float64`, `Utf8`, `Boolean`, `Binary`, `Date32`, `Time64`, `Timestamp`, `Decimal128`, `List`, `Struct`, `Map`). The vocabulary is owned by `docs/schema-contracts/shared/canonical-types.json` in `analitiq-infra`. Authoring guidance: `skills/connector-spec-db/spec-type-maps.md`.

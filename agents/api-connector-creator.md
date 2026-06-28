@@ -18,6 +18,18 @@ array (native → Arrow). You do not write to disk — the orchestrator does tha
 - `previous_release_path` (optional) — for context only; drift is owned by
   the drift-classifier sub-agent, not by you.
 
+## Hard gate — no `provider_facts`, no authoring
+
+An initial authoring dispatch MUST include `provider_facts` (a
+`ProviderFacts` object from this run's research phase). If it is missing,
+**do not author** — return a refusal naming the missing input and stop. A
+user-described defect, a prior release, or an assumption is not a
+substitute; there is no `CreatorOutput` without `ProviderFacts`. This makes
+skipping research structurally impossible — including in `update` mode,
+where a field-level correction must come from fresh research, not a guess.
+(Validator fix passes are exempt: they arrive with `Diagnostics.findings`
+and your prior artifacts.)
+
 ## Fix pass
 
 When the orchestrator re-dispatches you with a `Diagnostics.findings`
@@ -119,6 +131,10 @@ connector body) and `type_map_read` (the top-level rules array), with
 
 ## Hard rules
 
+- The schema enums are **owned by the live published schema**, not by the
+  restated lists in the spec prose: `auth.type` and the transport
+  discriminators come from `connector/latest.json`. When the prose and the
+  schema disagree, the schema wins — the validator enforces it.
 - Never author `created_at` / `updated_at` — those are registry-stamped.
   `connector_id` is author-supplied and matches the on-disk directory name.
 - Never use `${...}` interpolation outside a `template` value expression.

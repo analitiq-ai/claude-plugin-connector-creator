@@ -1,7 +1,15 @@
 # Contract-Derived Research
 
-**Status:** design proposal · **Scope:** how `researcher`
+**Status:** implemented · **Scope:** how `researcher`
 decides what to research, and how `ProviderFacts` is defined.
+
+> Implemented across the researcher (`agents/connector-provider-researcher.md`),
+> the orchestrator (`skills/connector-builder/SKILL.md` + `references/pipeline.md`),
+> the I/O contracts (`references/io-contracts.md`: `ProviderFacts` +
+> `EndpointFacts`), the creators' hard gate, and the drift policy
+> (`CLAUDE.md`, validator, `tests/connector_validator/test_schema_drift.py`).
+> The agent-file rename to role-based names (§5) remains the one deferred
+> item — this doc still uses the target names.
 
 ## TL;DR
 
