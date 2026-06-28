@@ -200,9 +200,12 @@ Database connectors skip this phase entirely.
      domains, nullability, formats). This is the per-resource research
      that grounds field types instead of guessing them.
    - `endpoint-creator` authors the endpoint document from `EndpointFacts`
-     and the connector document (for transport/auth refs). Its hard gate
-     refuses if `EndpointFacts` is missing — it has no web access and may
-     not guess field types.
+     and the connector document (for transport/auth refs). The API connector
+     body carries no connector-level pagination, so the orchestrator echoes
+     the connector-wide pagination (`ProviderFacts.pagination` → style +
+     params) into the branch's `EndpointFacts.pagination`. Its hard gate
+     refuses if `EndpointFacts` is missing — it has no web access and may not
+     guess field types.
    - `connector-schema-validator` validates the endpoint against
      `https://schemas.analitiq.ai/api-endpoint/latest.json`, with the same
      per-artifact 5-pass fix loop as phase 4 (re-dispatch

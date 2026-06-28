@@ -74,8 +74,10 @@ was raised.
      (`query` / `header` / `path` / `body`), `type`, `required`,
      optional `default` (value expression), `operators` for filterable
      params, and `controlled_by` when pagination / replication owns it.
-   - `pagination` — populate per the connector's pagination style when
-     `endpoint_facts.paginated` is true.
+   - `pagination` — when `endpoint_facts.paginated` is true, populate per
+     `endpoint_facts.pagination` (the connector-wide `style` + `params`,
+     echoed into the branch — the API connector body carries no
+     connector-level pagination, so this is your only source for it).
    - `replication` — only if the resource supports incremental sync; the
      cursor field is `endpoint_facts.replication_cursor`.
    - `response.records` — `ref` whose path starts with `response.body`,
@@ -84,9 +86,13 @@ was raised.
      **from `endpoint_facts.fields`** — one typed property per field. For
      each field, the declared `arrow_type` is the field's
      `endpoint_facts.fields[].arrow_type` and the `native_type` annotation is
-     its `native_type` (which must resolve through the connector's
-     `type-map-read`). Do not invent or guess field types — every type comes
-     from the researched facts.
+     its `native_type`. These are **not** two independent sources: the
+     connector's `type-map-read` must render that `native_type` to a canonical
+     **equal to** the declared `arrow_type` — the validator's
+     `type-map-coverage` enforces exactly this. If they would diverge, the read
+     map is wrong (a domain-level type-map fix, re-author + re-validate the
+     domain), not the endpoint. Do not invent or guess field types — every
+     type comes from the researched facts.
      - **Temporal fields follow the sample value, never a default.** A
        `date-time` field is *not* automatically tz-aware. Use the field's
        `tz_aware` flag (set by research from a real `sample_value`): a

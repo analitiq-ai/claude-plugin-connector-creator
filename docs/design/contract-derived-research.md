@@ -38,13 +38,13 @@ creator writes from facts. Both **read** the contract schemas as shared
 
 ## 1. Why (the gap this closes)
 
-`ProviderFacts` (API branch) today carries only the **connector skeleton**:
-`auth_model · base_urls · post_auth_selections · discovery_endpoints ·
-pagination · rate_limit`. `discovery_endpoints` holds `{purpose, method,
-path}` — **no response field schemas**. So field-level provider truths
-(datetime zone-awareness, enum domains, nullability, formats) have **no slot
-in research output** and are *guessed* by the authoring agents instead of
-researched.
+Before this change, `ProviderFacts` (API branch) carried only the **connector
+skeleton**: `auth_model · base_urls · post_auth_selections ·
+discovery_endpoints · pagination · rate_limit`. `discovery_endpoints` held
+`{purpose, method, path}` — **no response field schemas**. So field-level
+provider truths (datetime zone-awareness, enum domains, nullability, formats)
+had **no slot in research output** and were *guessed* by the authoring agents
+instead of researched.
 
 Consequences:
 
@@ -300,7 +300,7 @@ flowchart LR
     SC --- C
     SC --- E
     R == ProviderFacts ==> C
-    R == ProviderFacts ==> E
+    R == EndpointFacts ==> E
 
     classDef ext fill:#fce8e6,stroke:#ea4335;
     classDef c fill:#e8f0fe,stroke:#4285f4;

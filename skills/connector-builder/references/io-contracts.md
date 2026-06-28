@@ -194,7 +194,15 @@ access and may not guess field types).
     "resource": { "type": "string", "description": "Resource key; matches the ProviderFacts.resources[].key and becomes the endpoint_id." },
     "method": { "type": "string" },
     "path": { "type": "string" },
-    "paginated": { "type": "boolean" },
+    "paginated": { "type": "boolean", "description": "Whether this resource's list operation paginates." },
+    "pagination": {
+      "type": "object",
+      "description": "The connector-wide pagination style + params (echoed from ProviderFacts.pagination into the branch), so endpoint-creator — which sees only EndpointFacts + the connector body — can author the per-endpoint pagination block. Present whenever `paginated` is true.",
+      "properties": {
+        "style": { "type": "string", "enum": ["offset", "page", "cursor", "link", "keyset"] },
+        "params": { "type": "array", "items": { "type": "string" } }
+      }
+    },
     "replication_cursor": { "type": "string", "description": "Field usable as an incremental cursor, when the resource supports one." },
     "record_path": { "type": "string", "description": "Path to the iterable record collection in the response body (informs response.records, e.g. `response.body.data`)." },
     "writable": { "type": "boolean" },

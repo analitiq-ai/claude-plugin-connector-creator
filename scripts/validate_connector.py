@@ -14,7 +14,6 @@ authored documents declare the same host in their `$schema` field — the
 from __future__ import annotations
 
 import argparse
-import functools
 import hashlib
 import json
 import os
@@ -197,22 +196,34 @@ def _enum_at(schema: dict, *path: str) -> set[str] | None:
     return set(enum) if isinstance(enum, list) else None
 
 
-@functools.lru_cache(maxsize=1)
-def known_encodings() -> frozenset[str]:
+def known_encodings() -> tuple[frozenset[str], bool]:
     """Closed DSN-binding `encoding` enum, read from the live connector schema.
 
-    Falls back to `_FALLBACK_ENCODINGS` when the schema can't be reached or
-    no longer exposes the enum at the expected pointer, so offline runs keep
-    working without silently accepting an arbitrary value.
+    Returns `(enum, derived_from_live)`. `derived_from_live` is False when the
+    enum fell back to `_FALLBACK_ENCODINGS` — either the schema host was
+    unreachable (offline / infra) or the enum is no longer at the expected
+    pointer (the contract moved). The caller surfaces that as a `dsn-binding`
+    warning rather than silently validating against a possibly-stale copy.
+
+    Only the expected fetch/parse failures are absorbed; a bug in `_enum_at`
+    or any other unexpected error propagates so the per-validator crash
+    handler reports it loudly instead of masquerading as "offline".
     """
     try:
         schema = fetch_schema(CONNECTOR_SCHEMA_URL)
-        derived = _enum_at(schema, "$defs", "DsnBinding", "properties", "encoding")
-        if derived:
-            return frozenset(derived)
-    except Exception:
-        pass
-    return frozenset(_FALLBACK_ENCODINGS)
+    except (
+        urllib.error.URLError,
+        TimeoutError,
+        OSError,
+        json.JSONDecodeError,
+        RuntimeError,
+        UnicodeDecodeError,
+    ):
+        return frozenset(_FALLBACK_ENCODINGS), False
+    derived = _enum_at(schema, "$defs", "DsnBinding", "properties", "encoding")
+    if derived:
+        return frozenset(derived), True
+    return frozenset(_FALLBACK_ENCODINGS), False
 
 
 def check_reserved_fields(doc: dict) -> list[dict]:
@@ -480,6 +491,8 @@ def check_dsn_bindings(doc: dict) -> list[dict]:
     transports = doc.get("transports", {})
     if not isinstance(transports, dict):
         return findings  # `check_transport_refs` already emitted the structural error
+    encodings, encodings_from_live = known_encodings()
+    offline_encoding_warned = False
     # `[^}]*` (not `+`) so an empty `{}` is captured and flagged below; with
     # `+` it matched nothing and slipped through to corrupt the DSN URL at
     # runtime (same bug class as the `${}` value-expression/type-map sites).
@@ -629,8 +642,23 @@ def check_dsn_bindings(doc: dict) -> list[dict]:
                 )
                 continue
             enc = bspec.get("encoding")
-            encodings = known_encodings()
-            if enc is not None and enc not in encodings:
+            if enc is None:
+                continue
+            if not encodings_from_live and not offline_encoding_warned:
+                findings.append(
+                    finding(
+                        "dsn-binding",
+                        "warning",
+                        f"{path_prefix}/bindings/{bk}/encoding",
+                        "DSN-binding `encoding` enum could not be derived from the live "
+                        "connector schema (host unreachable or contract moved); validated "
+                        "against the offline fallback set. Re-run with network access to "
+                        f"verify against {CONNECTOR_SCHEMA_URL}.",
+                        rule_doc="connectors/connector-schema-parameterization.md#transport-contracts",
+                    )
+                )
+                offline_encoding_warned = True
+            if enc not in encodings:
                 findings.append(
                     finding(
                         "dsn-binding",
