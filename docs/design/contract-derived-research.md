@@ -1,6 +1,6 @@
 # Contract-Derived Research
 
-**Status:** design proposal · **Scope:** how `connector-provider-researcher`
+**Status:** design proposal · **Scope:** how `researcher`
 decides what to research, and how `ProviderFacts` is defined.
 
 ## TL;DR
@@ -145,14 +145,21 @@ flowchart TD
 
 ## 5. Capabilities, ownership, boundaries
 
+> **Naming.** Agents use role-based names — the redundant `connector-`
+> prefix is dropped (the plugin already says *connector-builder*):
+> `researcher`, `validator`, `drift-classifier`, `api-creator`,
+> `db-creator`, `storage-creator`, `endpoint-creator`. The orchestrator
+> skill stays `connector-builder`. The repo-wide rename of the agent files
+> is a separate refactor; this doc uses the target names.
+
 ### 5.1 Capability matrix
 
 | Agent | Read docs (web) | Read contract schemas | Author connector JSON | Validate |
 |---|:---:|:---:|:---:|:---:|
-| `connector-provider-researcher` | ✅ | ✅ (as spec) | ❌ | ❌ |
-| `api` / `db connector-creator` | ❌ | ✅ (as vocabulary) | ✅ | ❌ |
+| `researcher` | ✅ | ✅ (as spec) | ❌ | ❌ |
+| `api-creator` / `db-creator` | ❌ | ✅ (as vocabulary) | ✅ | ❌ |
 | `endpoint-creator` | ❌ | ✅ (as vocabulary) | ✅ (endpoints) | ❌ |
-| `connector-schema-validator` | ❌ | ✅ (to validate) | ❌ | ✅ |
+| `validator` | ❌ | ✅ (to validate) | ❌ | ✅ |
 | `orchestrator` | ❌ | ✅ (to derive checklist) | ❌ (dispatches) | ❌ |
 
 The contract schema is **read** by everyone — shared *vocabulary*. Web access
@@ -163,10 +170,10 @@ is **only** the researcher's — the *capability* that defines the boundary.
 | Artifact | Owner |
 |---|---|
 | What-to-research (mission spec) | contract schemas (derived) |
-| `ProviderFacts` (contract coverage) | `connector-provider-researcher` |
-| Connector body + type maps | `connector-creator` |
+| `ProviderFacts` (contract coverage) | `researcher` |
+| Connector body + type maps | `api-creator` / `db-creator` |
 | Endpoint documents | `endpoint-creator` |
-| Pass/fail against the contract | `connector-schema-validator` |
+| Pass/fail against the contract | `validator` |
 | Phase sequencing + dispatch | orchestrator |
 
 ### 5.3 Boundary
@@ -180,7 +187,7 @@ flowchart LR
     end
 
     subgraph AUTH[AUTHORING domain — capability: none external]
-        C[connector-creator]
+        C[api / db creator]
         E[endpoint-creator]
     end
 
@@ -257,7 +264,7 @@ opt-in extra.
 1. **`io-contracts.md`** — `ProviderFacts` stops hand-curating field shapes;
    it becomes a contract-coverage object (mirrors / `$ref`s the live
    `connector`, `api-endpoint`, `type-map-read` schemas).
-2. **`connector-provider-researcher`** — granted read access to the contract
+2. **`researcher`** — granted read access to the contract
    schemas; mission reframed to "cover the contract for this system."
 3. **Orchestrator** — optionally derive + pass a checklist (schema-walk stays
    here).
