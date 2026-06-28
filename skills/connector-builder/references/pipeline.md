@@ -13,11 +13,13 @@ no fix loop), skipping phases 1–4 and 6–7.
 - **`build`** (default) — author a fresh connector; phase 0 halts if the
   `{connector_id}/` directory already exists.
 - **`update`** — re-author an existing connector from *current* docs and
-  re-version it. Phases 1–5 run normally; the existing connector is read
-  **only** as the drift baseline (phase 0), drift is required (phase 6),
-  and phase 7 regenerates the tree in place. The prior files are the
-  versioning baseline, never the working copy — they are not edited.
-  Runs inside a VCS checkout so the regeneration is reviewable.
+  re-version it. Phase 1 (research) runs first, even when the user hands
+  you the defect or the fix — skip it only for a trivial, non-behavioral
+  tweak. Phases 1–5 run normally; the existing connector is read **only** as
+  the drift baseline (phase 0), drift is required (phase 6), and phase 7
+  regenerates the tree in place. The prior files are the versioning
+  baseline, never the working copy — they are not edited. Runs inside a VCS
+  checkout so the regeneration is reviewable.
 - **`validate`** — read-only. Skip phases 1–4 and 6–7; run phase 5 over
   the on-disk documents and report the diagnostics. To fix findings,
   re-run in `update` mode.

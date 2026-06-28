@@ -46,9 +46,12 @@ no fix loop), skipping phases 1–4 and 6–7.
 - **`build`** (default) — author a fresh connector. Phase 0 halts if a
   `{connector_id}/` directory already exists.
 - **`update`** — the connector already exists and its upstream system
-  has changed. Re-author from *current* docs (phases 1–5 run normally),
-  then diff the fresh draft against the existing connector to set the
-  new version (phase 6 is required), and regenerate the tree (phase 7).
+  has changed. Re-author from *current* docs — run phase 1 (research)
+  first, even when the user hands you the defect or the fix; skip it only
+  for a trivial, non-behavioral tweak (cosmetic, metadata, version). Phases
+  1–5 run normally, then diff the fresh draft against the existing connector
+  to set the new version (phase 6 is required), and regenerate the tree
+  (phase 7).
   The existing connector is read **only** as the drift baseline — it is
   never edited in place, and the version is bumped from the prior
   release, never reset to `1.0.0`. Run inside a VCS checkout so the
