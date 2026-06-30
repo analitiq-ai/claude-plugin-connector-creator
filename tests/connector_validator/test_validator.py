@@ -1752,29 +1752,37 @@ def test_endpoint_filename_unusable_id_warns_via_connector_coverage(tmp_path):
 
 
 def test_connector_non_dict_sibling_endpoint_is_clean_error(tmp_path):
-    """A parsed-but-non-dict `endpoints/*.json` yields a clean per-file error
-    and does not crash or abort the walk — a correctly-named sibling alongside
-    it is still checked (no leftover 'validator crashed' finding)."""
+    """A parsed-but-non-dict `endpoints/*.json` yields a clean per-file error and
+    does NOT crash or abort the walk: a misnamed sibling sorting after it is
+    still flagged (pins `continue`, not `break`), while a correctly-named one
+    produces no finding — all with no 'validator crashed' finding."""
     connector = json.loads(VALID_API_CONNECTOR.read_text())
     (tmp_path / "connector.json").write_text(json.dumps(connector))
     (tmp_path / "type-map-read.json").write_text(
         (VALID_API_CONNECTOR.parent / "type-map-read.json").read_text()
     )
     (tmp_path / "endpoints").mkdir()
+    # Walked in sorted order: bad.json < ping.json < zebra.json.
     (tmp_path / "endpoints" / "bad.json").write_text(json.dumps(["not", "an", "object"]))
-    # A valid, correctly-named sibling proves the loop continued past `bad.json`.
     (tmp_path / "endpoints" / "ping.json").write_text(
         (VALID_API_CONNECTOR.parent / "endpoints" / "ping.json").read_text()
     )
+    # A misnamed-but-valid sibling AFTER bad.json: its endpoint-filename error
+    # can only surface if the loop continued past the non-dict sibling.
+    _write_named_endpoint(tmp_path / "endpoints", filename="zebra.json", endpoint_id="users")
     result = run_validator(tmp_path / "connector.json", "--semantic-only")
     cov_errs = errors_of(result, "type-map-coverage")
     assert any("bad.json" in e["message"] and "not a JSON object" in e["message"] for e in cov_errs), \
         f"expected a clean non-dict-sibling error; got {cov_errs}"
     assert not any("crashed" in f["message"] for f in result["findings"]), \
         f"non-dict sibling must not surface as a validator crash; got {result['findings']}"
-    # ping.json is correctly named → no endpoint-filename finding for it.
-    assert not [f for f in result["findings"] if f["validator"] == "endpoint-filename"], \
-        f"correctly-named sibling should produce no endpoint-filename finding; got {result['findings']}"
+    # Loop continued past bad.json: the later misnamed sibling is still flagged.
+    ef_errs = errors_of(result, "endpoint-filename")
+    assert any("zebra.json" in e["message"] for e in ef_errs), \
+        f"loop must continue past the non-dict sibling and flag later siblings; got {ef_errs}"
+    # The correctly-named sibling produces no finding of any kind.
+    assert not any("ping.json" in f["message"] for f in result["findings"]), \
+        f"correctly-named sibling should produce no finding; got {result['findings']}"
 
 
 def test_endpoint_filename_no_path_warns():

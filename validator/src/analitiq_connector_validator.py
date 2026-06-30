@@ -3043,10 +3043,10 @@ def _endpoint_filename_findings(ep_doc: Any, filename: str) -> list[dict]:
                 "/endpoint_id",
                 f"endpoint filename check skipped for {filename!r}: endpoint_id is "
                 "absent or non-string, so the basename cannot be compared to the "
-                "expected '{endpoint_id}.json'. Layer 1 owns the required/pattern "
-                "error where it runs, but sibling endpoints and --semantic-only runs "
-                "have no Layer 1 backstop — rerun without `--semantic-only` to see the "
-                "schema error.",
+                "expected '{endpoint_id}.json'. Layer 1 owns the hard required/pattern "
+                "error, but it never runs on sibling endpoints during connector "
+                "validation, nor under `--semantic-only` — validate this endpoint file "
+                "directly (without `--semantic-only`) to surface the schema error.",
                 rule_doc="endpoints/api-endpoint-schema-parameterization.md",
             )
         ]
