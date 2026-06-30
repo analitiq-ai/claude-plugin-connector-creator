@@ -1,0 +1,61 @@
+name: Tests
+
+# Runs the validator test suite (tests/connector_validator/). Without this,
+# the Layer 1 + Layer 2 tests and the schema-drift guards only ran when a
+# contributor remembered to run pytest locally (issue #20).
+
+on:
+  pull_request:
+  push:
+    branches: [main]
+  schedule:
+    # Daily — exercises the network-marked tests (enum drift guards + live-schema
+    # fetch checks) so contract drift or an unreachable schema host is caught
+    # even when no one opens a PR.
+    - cron: '17 6 * * *'
+  workflow_dispatch:
+
+# Read-only: the suite only checks out and runs pytest — no secrets, no writes.
+permissions:
+  contents: read
+
+concurrency:
+  group: tests-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  unit:
+    name: Validator tests (offline)
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+      - name: Install dependencies
+        run: pip install pytest 'jsonschema>=4.18'
+      - name: Run offline tests
+        # The whole suite minus the live-fetch guards — fast and hermetic, so
+        # it gates every PR.
+        run: pytest tests/connector_validator/ -m "not network" -v
+
+  drift:
+    name: Network tests (drift guards + live schema)
+    # The network-marked suite: the enum drift guards (which pin plugin-side
+    # vocabularies to the live published contract) plus the Layer-1 live-schema
+    # fetch checks. Scheduled / on-demand only, never on PRs, so a flaky schema
+    # host can't block merges.
+    # If schemas.analitiq.ai is unreachable the drift guards `pytest.skip`, but
+    # the Layer-1 fetch tests fail — so an outage shows up as a RED scheduled
+    # run, never a silent green. `-rs` prints any skip reasons in the log.
+    if: github.event_name == 'schedule' || github.event_name == 'workflow_dispatch'
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+      - name: Install dependencies
+        run: pip install pytest 'jsonschema>=4.18'
+      - name: Run network drift guards
+        run: pytest tests/connector_validator/ -m network -v -rs
