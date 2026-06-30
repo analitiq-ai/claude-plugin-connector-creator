@@ -1815,11 +1815,31 @@ def check_type_map_coverage(doc: dict, doc_path: Path | None = None) -> list[dic
                 )
             )
             continue
+        # A parsed-but-non-dict sibling (`[]`, a string, a number) would crash
+        # the `_collect_asymmetric_pairs` walker below on its unguarded
+        # `.get("operations")` — the dispatcher would catch it but mislabel it
+        # a validator bug AND abort the loop, leaving every remaining sibling
+        # unchecked. Shape-gate here so it surfaces as a clean per-file error
+        # and the loop continues.
+        if not isinstance(ep_doc, dict):
+            findings.append(
+                finding(
+                    "type-map-coverage",
+                    "error",
+                    "/",
+                    f"endpoint file '{ep_path.name}' is not a JSON object (got {type(ep_doc).__name__}); "
+                    "cannot analyze its filename or annotations.",
+                    rule_doc="shared/type-maps.md",
+                )
+            )
+            continue
         # The endpoint file's basename must equal `{endpoint_id}.json` (the
-        # engine's on-disk lookup key). Enforced here on every sibling so a
-        # connector-level run catches it, parity with the asymmetric-pair and
-        # marker walkers; the standalone `check_endpoint_filename` covers the
-        # case where an endpoint is validated by itself.
+        # engine's on-disk lookup key). Enforced here on every sibling, in the
+        # same per-endpoint loop as the asymmetric-pair / marker walkers, so a
+        # connector-level run catches it; the standalone `check_endpoint_filename`
+        # covers an endpoint validated by itself. The parity is positional —
+        # findings surface under the `endpoint-filename` id (not
+        # `type-map-coverage` like the sibling walkers), so don't realign the id.
         findings.extend(_endpoint_filename_findings(ep_doc, ep_path.name))
         for problem_pointer, problem_kind in _collect_asymmetric_pairs(ep_doc):
             if problem_kind == "asymmetric":
@@ -2999,15 +3019,37 @@ def _endpoint_filename_findings(ep_doc: Any, filename: str) -> list[dict]:
     """Findings for an api-endpoint whose file basename ≠ `{endpoint_id}.json`.
 
     `filename` is the endpoint file's basename (e.g. `"users.json"`). Returns
-    `[]` when the document is not a dict, when `endpoint_id` is absent or
-    non-string (Layer 1 owns the required/type error and the equality is
-    undefined without a string id), or when the names already agree.
+    `[]` when the document is not a dict (a defensive guard — the connector
+    walk shape-gates non-dict siblings before calling, and the standalone
+    caller passes a dict) or when the names already agree.
+
+    A missing / non-string `endpoint_id` is NOT a silent pass — it warns. The
+    filename↔id equality is the only thing this check exists to verify, so an
+    unusable id means the check is *prevented*, not satisfied. Layer 1 owns the
+    hard required/pattern error, but it never runs on sibling endpoints (only
+    the top-level CLI document is schema-validated) nor under `--semantic-only`,
+    so a bare `return []` here would let exactly the file this check targets —
+    one with no resolvable on-disk name — pass green. Mirrors the
+    `doc_path is None` / `kind is None` "skipped" warnings.
     """
     if not isinstance(ep_doc, dict):
         return []
     endpoint_id = ep_doc.get("endpoint_id")
     if not isinstance(endpoint_id, str):
-        return []
+        return [
+            finding(
+                "endpoint-filename",
+                "warning",
+                "/endpoint_id",
+                f"endpoint filename check skipped for {filename!r}: endpoint_id is "
+                "absent or non-string, so the basename cannot be compared to the "
+                "expected '{endpoint_id}.json'. Layer 1 owns the required/pattern "
+                "error where it runs, but sibling endpoints and --semantic-only runs "
+                "have no Layer 1 backstop — rerun without `--semantic-only` to see the "
+                "schema error.",
+                rule_doc="endpoints/api-endpoint-schema-parameterization.md",
+            )
+        ]
     expected = f"{endpoint_id}.json"
     if filename == expected:
         return []

@@ -1668,6 +1668,113 @@ def test_endpoint_filename_surfaced_via_connector_coverage(tmp_path):
     assert any(
         "misnamed.json" in e["message"] and "ping.json" in e["message"] for e in errs
     ), f"expected connector-level filename error from sibling endpoint; got {errs}"
+    # An error-severity endpoint-filename finding must flip the connector verdict.
+    assert result["passed"] is False
+
+
+def test_endpoint_filename_extension_mismatch_caught(tmp_path):
+    """The expected name is `{endpoint_id}.json` — a matching stem with a
+    different extension still diverges (guards against a `stem == endpoint_id`
+    simplification that would let `users.txt` through)."""
+    ep = _write_named_endpoint(tmp_path, filename="users.txt", endpoint_id="users")
+    result = run_validator(ep, "--semantic-only", schema_url=API_ENDPOINT_SCHEMA_URL)
+    errs = errors_of(result, "endpoint-filename")
+    assert any("users.txt" in e["message"] and "users.json" in e["message"] for e in errs), \
+        f"expected extension-mismatch error; got {errs}"
+
+
+def test_endpoint_filename_database_endpoint_not_flagged(tmp_path):
+    """A database-endpoint document (`endpoint_id` + `columns[]`, no
+    `operations`, no `kind`) is out of plugin scope and must NOT route to the
+    api-endpoint filename check — the dispatcher gate (`is_endpoint_doc`
+    requires `operations`) is the sole protection, so pin it."""
+    db_endpoint = {
+        "$schema": "https://schemas.analitiq.ai/database-endpoint/latest.json",
+        "endpoint_id": "accounts",
+        "columns": [{"name": "id", "native_type": "bigint", "arrow_type": "Int64"}],
+    }
+    path = tmp_path / "misnamed_db.json"
+    path.write_text(json.dumps(db_endpoint))
+    result = run_validator(path, "--semantic-only", schema_url=API_ENDPOINT_SCHEMA_URL)
+    assert not [f for f in result["findings"] if f["validator"] == "endpoint-filename"], \
+        f"DB-endpoint doc must not produce endpoint-filename findings; got {result['findings']}"
+
+
+@pytest.mark.parametrize("endpoint_id", [None, 123], ids=["absent", "non-string"])
+def test_endpoint_filename_unusable_id_warns_standalone(tmp_path, endpoint_id):
+    """An absent / non-string `endpoint_id` can't be compared to the basename.
+    Rather than silently pass (no Layer 1 backstop under `--semantic-only`),
+    the check warns."""
+    doc = {
+        "$schema": API_ENDPOINT_SCHEMA_URL,
+        "operations": {
+            "read": {
+                "request": {"method": "GET", "path": "/u"},
+                "response": {"records": {"ref": "response.body"}, "schema": {"type": "object"}},
+            }
+        },
+    }
+    if endpoint_id is not None:
+        doc["endpoint_id"] = endpoint_id
+    path = tmp_path / "whatever.json"
+    path.write_text(json.dumps(doc))
+    result = run_validator(path, "--semantic-only", schema_url=API_ENDPOINT_SCHEMA_URL)
+    warns = warnings_of(result, "endpoint-filename")
+    assert any("endpoint_id is absent or non-string" in w["message"] for w in warns), \
+        f"expected an unusable-endpoint_id warning; got {result['findings']}"
+    assert not errors_of(result, "endpoint-filename"), \
+        "an unusable endpoint_id must warn, not error (Layer 1 owns the hard error)"
+
+
+def test_endpoint_filename_unusable_id_warns_via_connector_coverage(tmp_path):
+    """The sibling-endpoint path has NO Layer 1 backstop (endpoints are never
+    schema-validated during a connector run), so an absent `endpoint_id` on a
+    sibling must warn rather than pass silently."""
+    connector = json.loads(VALID_API_CONNECTOR.read_text())
+    (tmp_path / "connector.json").write_text(json.dumps(connector))
+    (tmp_path / "type-map-read.json").write_text(
+        (VALID_API_CONNECTOR.parent / "type-map-read.json").read_text()
+    )
+    (tmp_path / "endpoints").mkdir()
+    (tmp_path / "endpoints" / "orphan.json").write_text(json.dumps({
+        "$schema": API_ENDPOINT_SCHEMA_URL,
+        "operations": {
+            "read": {
+                "request": {"method": "GET", "path": "/x"},
+                "response": {"records": {"ref": "response.body"}, "schema": {"type": "object"}},
+            }
+        },
+    }))
+    result = run_validator(tmp_path / "connector.json", "--semantic-only")
+    warns = warnings_of(result, "endpoint-filename")
+    assert any("orphan.json" in w["message"] and "absent or non-string" in w["message"] for w in warns), \
+        f"expected sibling unusable-endpoint_id warning; got {result['findings']}"
+
+
+def test_connector_non_dict_sibling_endpoint_is_clean_error(tmp_path):
+    """A parsed-but-non-dict `endpoints/*.json` yields a clean per-file error
+    and does not crash or abort the walk — a correctly-named sibling alongside
+    it is still checked (no leftover 'validator crashed' finding)."""
+    connector = json.loads(VALID_API_CONNECTOR.read_text())
+    (tmp_path / "connector.json").write_text(json.dumps(connector))
+    (tmp_path / "type-map-read.json").write_text(
+        (VALID_API_CONNECTOR.parent / "type-map-read.json").read_text()
+    )
+    (tmp_path / "endpoints").mkdir()
+    (tmp_path / "endpoints" / "bad.json").write_text(json.dumps(["not", "an", "object"]))
+    # A valid, correctly-named sibling proves the loop continued past `bad.json`.
+    (tmp_path / "endpoints" / "ping.json").write_text(
+        (VALID_API_CONNECTOR.parent / "endpoints" / "ping.json").read_text()
+    )
+    result = run_validator(tmp_path / "connector.json", "--semantic-only")
+    cov_errs = errors_of(result, "type-map-coverage")
+    assert any("bad.json" in e["message"] and "not a JSON object" in e["message"] for e in cov_errs), \
+        f"expected a clean non-dict-sibling error; got {cov_errs}"
+    assert not any("crashed" in f["message"] for f in result["findings"]), \
+        f"non-dict sibling must not surface as a validator crash; got {result['findings']}"
+    # ping.json is correctly named → no endpoint-filename finding for it.
+    assert not [f for f in result["findings"] if f["validator"] == "endpoint-filename"], \
+        f"correctly-named sibling should produce no endpoint-filename finding; got {result['findings']}"
 
 
 def test_endpoint_filename_no_path_warns():
