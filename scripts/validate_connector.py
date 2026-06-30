@@ -1409,6 +1409,25 @@ def check_phase_resolvability(doc: dict) -> list[dict]:
 _PLACEHOLDER_RE = re.compile(r"\$\{([^}]*)\}")
 _NARROWING_ARROW_TYPES = {"Object", "List"}
 
+# Bare-marker `arrow_type` values: the `authored_shape_type` enum in the
+# published `canonical-types.json` (and accepted by the `arrow_type` pattern
+# in `api-endpoint/latest.json`, which lists `Object|List|Json` alongside the
+# scalar and parameterized forms). Each carries a sibling-key contract on its
+# endpoint field node that the JSON Schema layer does NOT mechanically enforce
+# (`JsonSchemaPropertyNode` is `additionalProperties: true` and only couples
+# `arrow_type` ↔ `native_type`), so the semantic layer enforces it — recursively
+# — from both `check_endpoint_annotations` (endpoint validated directly) and
+# `check_type_map_coverage` (sibling endpoints during connector validation):
+#   - `Object` — declares a known inner shape; REQUIRES a non-empty
+#     `properties` map, FORBIDS `items`.
+#   - `List`   — declares a known element shape; REQUIRES an `items` field
+#     spec (a sub-schema), FORBIDS `properties`.
+#   - `Json`   — opaque pass-through; FORBIDS both `properties` and `items`.
+# These are distinct from the parameterized `Struct<…>` / `List<…>` forms,
+# which carry their inner types inline and take no siblings (the exact-set
+# membership test below excludes them — do NOT loosen it to a prefix match).
+_BARE_MARKER_ARROW_TYPES = {"Object", "List", "Json"}
+
 # Schemaless / structured-container native types. A read-map rule whose
 # `native` is one of these (or a parameterized container such as
 # `array<object>` / `struct<...>` / `map<...>`) MUST render a container
@@ -1826,6 +1845,16 @@ def check_type_map_coverage(doc: dict, doc_path: Path | None = None) -> list[dic
                         rule_doc="shared/type-maps.md",
                     )
                 )
+        for problem_pointer, problem_kind in _collect_marker_sibling_violations(ep_doc):
+            findings.append(
+                finding(
+                    "type-map-coverage",
+                    "error",
+                    "/",
+                    f"endpoint '{ep_path.name}' field at {problem_pointer} {_marker_sibling_message(problem_kind)}",
+                    rule_doc="endpoints/api-endpoint-schema-parameterization.md",
+                )
+            )
         for native, arrow, pointer in _collect_endpoint_native_arrow_pairs(ep_doc):
             rendered = _render_canonical(native, tm_doc)
             site = f"{ep_path.name}{pointer}"
@@ -2718,6 +2747,170 @@ def _recurse_jsonschema(
             visit(sub, f"{pointer}/{keyword}")
 
 
+# Per-marker sibling-key violation kinds → human-readable message tails. The
+# pointer is prefixed at emission time. Keys are the `kind` strings emitted by
+# `_check_marker_siblings`.
+_MARKER_SIBLING_MESSAGES = {
+    "object_requires_properties": (
+        'declares arrow_type "Object" but has no non-empty `properties` map; '
+        "the `Object` marker requires `properties` describing the inner field shape "
+        "(use `Json` for an opaque object with no declared shape)."
+    ),
+    "object_forbids_items": (
+        'declares arrow_type "Object" with an `items` sibling; `items` belongs to the '
+        "`List` marker, not `Object`."
+    ),
+    "list_requires_items": (
+        'declares arrow_type "List" but has no `items` field spec; the `List` marker '
+        "requires `items` to be a sub-schema describing the element shape (a boolean / "
+        "null / scalar does not count — use `Json` for an opaque array with no declared "
+        "element shape)."
+    ),
+    "list_forbids_properties": (
+        'declares arrow_type "List" with a `properties` sibling; `properties` belongs to '
+        "the `Object` marker, not `List`."
+    ),
+    "json_forbids_properties": (
+        'declares arrow_type "Json" with a `properties` sibling; `Json` is opaque and '
+        "takes no inner declaration — use `Object` + `properties` to declare a shape."
+    ),
+    "json_forbids_items": (
+        'declares arrow_type "Json" with an `items` sibling; `Json` is opaque and takes '
+        "no inner declaration — use `List` + `items` to declare an element shape."
+    ),
+}
+
+
+def _marker_sibling_message(kind: str) -> str:
+    """Message tail for a marker sibling-key violation `kind`.
+
+    Uses `.get` with a generic fallback rather than a direct subscript so a
+    future `kind` added to `_check_marker_siblings` without a matching
+    `_MARKER_SIBLING_MESSAGES` entry degrades to a still-useful finding instead
+    of raising `KeyError`. A raise here would unwind `check_type_map_coverage`
+    and collapse every coverage finding for the connector into one synthetic
+    crash finding (cf. the `_check_type_map_rules_guarded` precedent for the
+    same hazard). `test_marker_message_keys_cover_every_emitted_kind` keeps the
+    mapping complete for all currently-emitted kinds.
+    """
+    return _MARKER_SIBLING_MESSAGES.get(
+        kind, f"violates the bare-marker arrow_type sibling-key contract (kind: {kind})."
+    )
+
+
+def _check_marker_siblings(node: dict, arrow: str, pointer: str, out: list[tuple[str, str]]) -> None:
+    """Emit sibling-key violations for one node carrying a bare-marker arrow_type.
+
+    Enforces the `authored_shape_type` contract the JSON Schema layer leaves
+    open (see `_BARE_MARKER_ARROW_TYPES`): `Object` requires a non-empty
+    `properties` map and forbids `items`; `List` requires an `items` sub-schema
+    and forbids `properties`; `Json` forbids both. Nodes whose `arrow_type` is
+    a scalar or a parameterized container (`Struct<…>`, `List<Int64>`, …) carry
+    no sibling contract and are ignored here.
+
+    The require checks demand the sibling actually be a sub-schema, not merely
+    present: `Object` needs a truthy `properties` dict, `List` needs `items`
+    to be a sub-schema — a dict (the api-endpoint contract's single-schema
+    form) or, defensively, a non-empty Draft-4/7 tuple list (the contract types
+    `items` as a single object, so a tuple is itself a Layer 1 error, but the
+    walkers tolerate it). A boolean / null / scalar / empty-list `items` does
+    NOT satisfy `List` — none can describe an element shape, so it is reported
+    as missing.
+    """
+    if arrow == "Object":
+        props = node.get("properties")
+        if not (isinstance(props, dict) and props):
+            out.append((pointer, "object_requires_properties"))
+        if "items" in node:
+            out.append((pointer, "object_forbids_items"))
+    elif arrow == "List":
+        items = node.get("items")
+        if not (isinstance(items, dict) or (isinstance(items, list) and items)):
+            out.append((pointer, "list_requires_items"))
+        if "properties" in node:
+            out.append((pointer, "list_forbids_properties"))
+    elif arrow == "Json":
+        if "properties" in node:
+            out.append((pointer, "json_forbids_properties"))
+        if "items" in node:
+            out.append((pointer, "json_forbids_items"))
+
+
+def _walk_jsonschema_markers(node: Any, pointer: str, out: list[tuple[str, str]]) -> None:
+    """Recurse a JSON Schema, collecting bare-marker sibling-key violations.
+
+    Reuses `_recurse_jsonschema` so it visits exactly the recursive
+    `JsonSchemaPropertyNode` keywords the well-formed and asymmetric walkers
+    do — children inside `properties` / `items` are themselves marker-checked,
+    matching the contract's "recursive" rule.
+
+    Like the other well-formed walkers, `_recurse_jsonschema` only descends
+    `isinstance`-gated containers, so a recursive keyword that is present but
+    the wrong type (e.g. `anyOf` authored as a dict) is silently skipped here —
+    any marker beneath it goes unchecked. That gap is covered by the
+    co-running `_collect_asymmetric_pairs` (a `non_dict_subtree` warning) and,
+    in default validation, by Layer 1 (a schema error). Both emission sites
+    run the asymmetric walker alongside this one; a future caller that does not
+    would lose the wrong-type signal.
+    """
+    if not isinstance(node, dict):
+        return
+    arrow = node.get("arrow_type")
+    if isinstance(arrow, str) and arrow in _BARE_MARKER_ARROW_TYPES:
+        _check_marker_siblings(node, arrow, pointer, out)
+    _recurse_jsonschema(node, pointer, lambda child, child_ptr: _walk_jsonschema_markers(child, child_ptr, out))
+
+
+def _walk_op_for_markers(op: dict, base_pointer: str, schema_field: str, out: list[tuple[str, str]]) -> None:
+    """Collect bare-marker sibling-key violations from one endpoint operation.
+
+    Visits the operation's `<schema_field>.schema` JSON-Schema tree (recursive)
+    and its flat `params`, matching the sub-trees `_walk_endpoint_op` walks for
+    coverage. A `Param` is `additionalProperties: false` and defines neither
+    `properties` nor `items` (nor `arrow_type` itself), so a param carrying
+    `arrow_type` is already a Layer 1 violation — this param branch only
+    matters under `--semantic-only`, where it flags an `Object` / `List` marker
+    the param can never satisfy (a `Json` param is opaque, forbids both, and is
+    left clean). Params are flat, so no recursion.
+    """
+    body = op.get(schema_field)
+    if isinstance(body, dict) and isinstance(body.get("schema"), dict):
+        _walk_jsonschema_markers(body["schema"], f"{base_pointer}/{schema_field}/schema", out)
+    params = op.get("params")
+    if isinstance(params, dict):
+        for pname, pspec in params.items():
+            if not isinstance(pspec, dict):
+                continue
+            arrow = pspec.get("arrow_type")
+            if isinstance(arrow, str) and arrow in _BARE_MARKER_ARROW_TYPES:
+                _check_marker_siblings(pspec, arrow, f"{base_pointer}/params/{pname}", out)
+
+
+def _collect_marker_sibling_violations(endpoint_doc: dict) -> list[tuple[str, str]]:
+    """Return `(json_pointer, kind)` tuples for bare-marker sibling-key
+    violations across an api-endpoint document's response/input schemas + params.
+
+    Walks the same `operations.read.response.schema` /
+    `operations.write.<mode>.input.schema` sub-trees and `params` maps the
+    coverage and asymmetric walkers visit.
+    """
+    out: list[tuple[str, str]] = []
+    operations = endpoint_doc.get("operations")
+    if not isinstance(operations, dict):
+        return out
+    read = operations.get("read")
+    if isinstance(read, dict):
+        _walk_op_for_markers(read, "/operations/read", "response", out)
+    write = operations.get("write")
+    if isinstance(write, dict):
+        # Iterate defensively — Layer 1 fixes write modes to {insert, upsert},
+        # but stay correct if the schema later widens the enum.
+        for mode, mode_op in write.items():
+            if isinstance(mode_op, dict):
+                _walk_op_for_markers(mode_op, f"/operations/write/{mode}", "input", out)
+    return out
+
+
 def check_endpoint_annotations(doc: Any) -> list[dict]:
     """Run the asymmetric / non-string / non-dict-subtree pair walker on
     an endpoint document validated directly.
@@ -2729,6 +2922,14 @@ def check_endpoint_annotations(doc: Any) -> list[dict]:
     under `--semantic-only` Layer 1 is bypassed, so this validator
     surfaces the same findings the coverage walker would have emitted
     when invoked from a parent connector.
+
+    Also enforces the bare-marker sibling-key contract
+    (`_BARE_MARKER_ARROW_TYPES`): `Object` → `properties`, `List` → `items`,
+    `Json` → neither. The JSON Schema layer accepts the marker but leaves the
+    sibling keys unconstrained, so the semantic layer (this validator, and
+    `type-map-coverage` for connector-level runs) is the only thing that
+    catches an `Object` with no `properties` or a `Json` carrying an inner
+    declaration.
     """
     findings: list[dict] = []
     if not isinstance(doc, dict):
@@ -2764,6 +2965,16 @@ def check_endpoint_annotations(doc: Any) -> list[dict]:
                     rule_doc="shared/type-maps.md",
                 )
             )
+    for problem_pointer, problem_kind in _collect_marker_sibling_violations(doc):
+        findings.append(
+            finding(
+                "endpoint-annotations",
+                "error",
+                "/",
+                f"endpoint field at {problem_pointer} {_marker_sibling_message(problem_kind)}",
+                rule_doc="endpoints/api-endpoint-schema-parameterization.md",
+            )
+        )
     return findings
 
 
