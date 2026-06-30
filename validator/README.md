@@ -24,7 +24,7 @@ authoring, the plugin, and registry CI all run one implementation.
 Pinned, from a tagged ref of this repo (no PyPI required):
 
 ```bash
-pip install "analitiq-connector-validator @ git+https://github.com/analitiq-ai/claude-plugin-connector-creator.git@validator-v0.1.0#subdirectory=validator"
+pip install "analitiq-connector-validator @ git+https://github.com/analitiq-ai/claude-plugin-connector.git@validator-v0.1.0#subdirectory=validator"
 ```
 
 ## Use
